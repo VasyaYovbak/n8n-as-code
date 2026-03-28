@@ -151,6 +151,23 @@ describe('AiContextGenerator', () => {
             expect(skillContent).toContain('npx --yes n8nac init-project');
         });
 
+        test('AGENTS.md should include execution debugging guidance', async () => {
+            await generator.generate(tempDir, '1.0.0');
+
+            const agentsContent = fs.readFileSync(path.join(tempDir, 'AGENTS.md'), 'utf-8');
+            expect(agentsContent).toContain('## 🧪 Debugging Past Executions');
+            expect(agentsContent).toContain('npx --yes n8nac executions list');
+            expect(agentsContent).toContain('npx --yes n8nac executions download <executionId>');
+            expect(agentsContent).toContain('configured `executionsFolder`');
+        });
+
+        test('getSkillContent() should include execution debugging guidance', () => {
+            const content = generator.getSkillContent();
+            expect(content).toContain('## 🧪 Debugging Past Executions');
+            expect(content).toContain('npx --yes n8nac executions list');
+            expect(content).toContain('npx --yes n8nac executions download <executionId>');
+        });
+
         test('getOpenClawSkillContent() should describe OpenClaw tool usage and AGENTS handoff', () => {
             const content = generator.getOpenClawSkillContent();
 

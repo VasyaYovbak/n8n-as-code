@@ -265,6 +265,24 @@ export class AiContextGenerator {
     ];
   }
 
+  private getExecutionDebuggingLines(cliCmd: string): string[] {
+    return [
+      `## 🧪 Debugging Past Executions`,
+      ``,
+      `When a workflow passed validation but failed or behaved unexpectedly at runtime, inspect recent executions before changing the workflow blindly.`,
+      ``,
+      `### Execution Debug Workflow`,
+      `1. List recent executions with \`${cliCmd} executions list\` and narrow by \`--workflow-id\`, \`--project-id\`, \`--status\`, or \`--limit\` when needed.`,
+      `2. Download the full payload for the most relevant execution with \`${cliCmd} executions download <executionId>\`.`,
+      `3. Read the saved JSON file from the configured \`executionsFolder\` (default: \`.executions\`) instead of pasting the full payload into chat.`,
+      `4. Use that execution JSON to inspect node inputs/outputs, expression results, \`error\` details, and the exact runtime data that reached each step.`,
+      `5. Only after inspecting the execution payload should you propose a workflow fix, then push and re-test.`,
+      ``,
+      `The execution download command returns an absolute file path. Treat that file as the source of truth for runtime debugging.`,
+      ``,
+    ];
+  }
+
   async generate(projectRoot: string, n8nVersion: string = "Unknown", distTag?: string): Promise<void> {
     const agentsContent = this.getAgentsContent(n8nVersion, distTag);
 
@@ -471,6 +489,7 @@ export class AiContextGenerator {
       `- **Class B exit 1** — wiring error (bad expression, wrong field): fix, push, re-test.`,
       `- Skip this step for Schedule/polling triggers — they cannot be called via HTTP.`,
       ``,
+      ...this.getExecutionDebuggingLines(cliCmd),
       `---`,
       ``,
       ...this.getWorkflowMapGuidanceLines(),
@@ -714,6 +733,8 @@ This returns the full JSON schema including all parameters, types, defaults, val
 ### Step 3: Apply the Knowledge
 
 Use the retrieved schema as the **absolute source of truth** when generating or modifying workflow TypeScript. Never add parameters that aren't in the schema.
+
+${this.getExecutionDebuggingLines(cliCmd).join('\n')}
 
 ${this.getWorkflowMapGuidanceLines().join('\n')}
 
