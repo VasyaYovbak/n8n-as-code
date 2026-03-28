@@ -271,4 +271,29 @@ export class SkillsMcpService {
         if (options.force) args.push('--force');
         return this.runCliCommand(args);
     }
+
+    listExecutions(options: {
+        workflowId?: string;
+        projectId?: string;
+        status?: string;
+        limit?: number;
+    } = {}) {
+        const args = ['executions', 'list', '--json'];
+        if (options.workflowId) args.push('--workflow-id', options.workflowId);
+        if (options.projectId) args.push('--project-id', options.projectId);
+        if (options.status) args.push('--status', options.status);
+        if (options.limit) args.push('--limit', String(options.limit));
+        return this.runCliCommand(args, true);
+    }
+
+    downloadExecution(options: {
+        executionId: string;
+        outputDir?: string;
+        includeData?: boolean;
+    }) {
+        const args = ['executions', 'download', options.executionId, '--json'];
+        if (options.outputDir) args.push('--output-dir', options.outputDir);
+        if (options.includeData === false) args.push('--no-include-data');
+        return this.runCliCommand(args, true);
+    }
 }

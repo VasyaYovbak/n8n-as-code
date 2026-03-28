@@ -298,6 +298,41 @@ export async function startSkillsMcpServer(options: SkillsMcpServiceOptions): Pr
         },
     );
 
+    server.tool(
+        'list_n8n_executions',
+        'List recent n8n workflow executions with optional filters. Uses `n8nac executions list --json`.',
+        {
+            workflowId: z.string().optional().describe('Optional workflow ID filter.'),
+            projectId: z.string().optional().describe('Optional project ID filter.'),
+            status: z.string().optional().describe('Optional execution status filter.'),
+            limit: z.number().int().min(1).max(100).optional().describe('Maximum number of executions to return.'),
+        },
+        async ({ workflowId, projectId, status, limit }) => {
+            const result = await service.listExecutions({ workflowId, projectId, status, limit });
+            return {
+                isError: !result.success,
+                content: [{ type: 'text', text: asJsonText(result) }],
+            };
+        },
+    );
+
+    server.tool(
+        'download_n8n_execution',
+        'Download the full payload for a specific execution to a JSON file and return the saved absolute path. Uses `n8nac executions download --json`.',
+        {
+            executionId: z.string().min(1).describe('Execution ID to download.'),
+            outputDir: z.string().optional().describe('Optional output directory override for downloaded execution files.'),
+            includeData: z.boolean().optional().describe('Whether to include the heavy execution data payload. Defaults to true.'),
+        },
+        async ({ executionId, outputDir, includeData }) => {
+            const result = await service.downloadExecution({ executionId, outputDir, includeData });
+            return {
+                isError: !result.success,
+                content: [{ type: 'text', text: asJsonText(result) }],
+            };
+        },
+    );
+
     const transport = new StdioServerTransport();
     await server.connect(transport);
 }

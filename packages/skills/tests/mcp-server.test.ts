@@ -156,4 +156,60 @@ describe('SkillsMcpService', () => {
         expect(cliSpy).toHaveBeenCalledTimes(1);
         expect(result.valid).toBe(true);
     });
+
+    test('lists executions via CLI', async () => {
+        const mockExecutions = {
+            success: true,
+            parsedJson: {
+                items: [{ id: '123', workflowId: 'wf-1', status: 'success' }],
+                total: 1,
+            },
+        };
+        const cliSpy = jest.spyOn(service as any, 'runCliCommand').mockResolvedValue(mockExecutions);
+
+        const result = await service.listExecutions({ workflowId: 'wf-1', projectId: 'proj-1', status: 'success', limit: 5 });
+
+        expect(cliSpy).toHaveBeenCalledWith([
+            'executions',
+            'list',
+            '--json',
+            '--workflow-id',
+            'wf-1',
+            '--project-id',
+            'proj-1',
+            '--status',
+            'success',
+            '--limit',
+            '5',
+        ], true);
+        expect(result).toEqual(mockExecutions);
+    });
+
+    test('downloads execution payload via CLI', async () => {
+        const mockDownload = {
+            success: true,
+            parsedJson: {
+                executionId: '123',
+                path: '/tmp/executions/123.json',
+            },
+        };
+        const cliSpy = jest.spyOn(service as any, 'runCliCommand').mockResolvedValue(mockDownload);
+
+        const result = await service.downloadExecution({
+            executionId: '123',
+            outputDir: '.executions',
+            includeData: false,
+        });
+
+        expect(cliSpy).toHaveBeenCalledWith([
+            'executions',
+            'download',
+            '123',
+            '--json',
+            '--output-dir',
+            '.executions',
+            '--no-include-data',
+        ], true);
+        expect(result).toEqual(mockDownload);
+    });
 });
