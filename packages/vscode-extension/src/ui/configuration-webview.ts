@@ -20,10 +20,11 @@ function toDisplayName(project: UiProject): string {
 
 async function clearLegacyWorkspaceSettings(): Promise<void> {
   const config = vscode.workspace.getConfiguration('n8n');
-  const keys: Array<'host' | 'apiKey' | 'syncFolder' | 'projectId' | 'projectName'> = [
+  const keys: Array<'host' | 'apiKey' | 'syncFolder' | 'executionsFolder' | 'projectId' | 'projectName'> = [
     'host',
     'apiKey',
     'syncFolder',
+    'executionsFolder',
     'projectId',
     'projectName',
   ];
@@ -110,6 +111,7 @@ export class ConfigurationWebview {
             const apiKey = (message.apiKey || '').trim();
 
             const syncFolder = (message.syncFolder || '').trim();
+            const executionsFolder = (message.executionsFolder || '').trim();
 
             const workspaceRoot = getWorkspaceRoot();
             const shouldAutoApply = !!workspaceRoot && isFolderPreviouslyInitialized(workspaceRoot);
@@ -149,6 +151,7 @@ export class ConfigurationWebview {
                 host,
                 apiKey,
                 syncFolder: syncFolder || 'workflows',
+                executionsFolder: executionsFolder || '.executions',
                 projectId,
                 projectName,
               });
@@ -217,11 +220,18 @@ export class ConfigurationWebview {
   }
 
   private async postInitialState() {
-    const { host, apiKey, projectId, projectName, syncFolder } = getResolvedN8nConfig(getWorkspaceRoot());
+    const { host, apiKey, projectId, projectName, syncFolder, executionsFolder } = getResolvedN8nConfig(getWorkspaceRoot());
 
     this._panel.webview.postMessage({
       type: 'init',
-      config: { host: normalizeHost(host), apiKey: apiKey.trim(), projectId, projectName, syncFolder },
+      config: {
+        host: normalizeHost(host),
+        apiKey: apiKey.trim(),
+        projectId,
+        projectName,
+        syncFolder,
+        executionsFolder,
+      },
     });
 
     // If we already have host + apiKey, proactively load projects.
@@ -336,6 +346,11 @@ export class ConfigurationWebview {
           <input id="syncFolder" type="text" placeholder="workflows" />
           <div class="muted small">Example: <code>workflows</code> or <code>n8n/workflows</code></div>
         </div>
+        <div class="field">
+          <label for="executionsFolder">Executions Folder (relative to workspace)</label>
+          <input id="executionsFolder" type="text" placeholder=".executions" />
+          <div class="muted small">Downloaded execution payloads are saved here, for example <code>.executions</code>.</div>
+        </div>
       </div>
     </div>
 
@@ -365,6 +380,7 @@ export class ConfigurationWebview {
     const apiKeyEl = document.getElementById('apiKey');
     const projectEl = document.getElementById('project');
     const syncFolderEl = document.getElementById('syncFolder');
+    const executionsFolderEl = document.getElementById('executionsFolder');
     const loadBtn = document.getElementById('loadProjects');
     const saveBtn = document.getElementById('save');
     const accordionToggle = document.getElementById('accordionToggle');
@@ -373,7 +389,14 @@ export class ConfigurationWebview {
     const savedEl = document.getElementById('saved');
 
     let projects = [];
-    let currentConfig = { host: '', apiKey: '', projectId: '', projectName: '', syncFolder: 'workflows' };
+    let currentConfig = {
+      host: '',
+      apiKey: '',
+      projectId: '',
+      projectName: '',
+      syncFolder: 'workflows',
+      executionsFolder: '.executions',
+    };
 
     let autoLoadTimer = null;
     let lastLoadRequest = { host: '', apiKey: '' };
@@ -492,6 +515,8 @@ export class ConfigurationWebview {
 
       const syncFolderEl = document.getElementById('syncFolder');
       const syncFolder = syncFolderEl ? (syncFolderEl.value || '').trim() : '';
+      const executionsFolderEl = document.getElementById('executionsFolder');
+      const executionsFolder = executionsFolderEl ? (executionsFolderEl.value || '').trim() : '';
 
       let projectId = projectEl.value || '';
       let projectName = '';
@@ -500,7 +525,7 @@ export class ConfigurationWebview {
         projectName = selectedOption.dataset.projectName;
       }
 
-      vscode.postMessage({ type: 'saveSettings', host, apiKey, projectId, projectName, syncFolder });
+      vscode.postMessage({ type: 'saveSettings', host, apiKey, projectId, projectName, syncFolder, executionsFolder });
     });
 
     if (accordionToggle) {
@@ -524,6 +549,8 @@ export class ConfigurationWebview {
 
         const syncFolderEl = document.getElementById('syncFolder');
         if (syncFolderEl) syncFolderEl.value = currentConfig.syncFolder || 'workflows';
+        const executionsFolderEl = document.getElementById('executionsFolder');
+        if (executionsFolderEl) executionsFolderEl.value = currentConfig.executionsFolder || '.executions';
         return;
       }
 

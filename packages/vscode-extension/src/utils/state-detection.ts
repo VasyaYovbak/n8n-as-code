@@ -9,6 +9,7 @@ export interface ResolvedN8nWorkspaceConfig {
   host: string;
   apiKey: string;
   syncFolder: string;
+  executionsFolder: string;
   projectId: string;
   projectName: string;
 }
@@ -22,7 +23,7 @@ function normalizeHost(host: string): string {
   return trimmed.endsWith('/') ? trimmed.slice(0, -1) : trimmed;
 }
 
-function getSettingsValue(key: 'host' | 'apiKey' | 'syncFolder' | 'projectId' | 'projectName'): string {
+function getSettingsValue(key: 'host' | 'apiKey' | 'syncFolder' | 'executionsFolder' | 'projectId' | 'projectName'): string {
   return readString(vscode.workspace.getConfiguration('n8n').get<string>(key));
 }
 
@@ -44,6 +45,7 @@ export function getResolvedN8nConfig(workspaceRoot = getWorkspaceRoot()): Resolv
     host,
     apiKey,
     syncFolder: readString(unified.syncFolder) || getSettingsValue('syncFolder') || 'workflows',
+    executionsFolder: readString(unified.executionsFolder) || getSettingsValue('executionsFolder') || '.executions',
     projectId: readString(unified.projectId) || getSettingsValue('projectId'),
     projectName: readString(unified.projectName) || getSettingsValue('projectName'),
   };

@@ -9,6 +9,7 @@ import {
 export type UnifiedWorkspaceConfig = {
     host?: string;
     syncFolder?: string;
+    executionsFolder?: string;
     projectId?: string;
     projectName?: string;
     instanceIdentifier?: string;
@@ -20,6 +21,7 @@ type BuildUnifiedWorkspaceConfigInput = {
     host: string;
     apiKey: string;
     syncFolder: string;
+    executionsFolder: string;
     projectId?: string;
     projectName?: string;
     instanceIdentifier?: string;
@@ -54,6 +56,16 @@ export function toStoredSyncFolder(workspaceRoot: string, syncFolder: string): s
         : syncFolder;
 }
 
+export function toStoredWorkspaceFolder(workspaceRoot: string, folder: string, fallback: string): string {
+    if (!folder) {
+        return fallback;
+    }
+
+    return folder.startsWith(workspaceRoot)
+        ? path.relative(workspaceRoot, folder) || fallback
+        : folder;
+}
+
 function setOptionalField(
     target: UnifiedWorkspaceConfig,
     key: keyof UnifiedWorkspaceConfig,
@@ -71,7 +83,12 @@ export async function buildUnifiedWorkspaceConfig(
     input: BuildUnifiedWorkspaceConfigInput
 ): Promise<UnifiedWorkspaceConfig> {
     const existing = readUnifiedWorkspaceConfig(input.workspaceRoot);
-    const storedSyncFolder = toStoredSyncFolder(input.workspaceRoot, input.syncFolder || 'workflows');
+    const storedSyncFolder = toStoredWorkspaceFolder(input.workspaceRoot, input.syncFolder || 'workflows', 'workflows');
+    const storedExecutionsFolder = toStoredWorkspaceFolder(
+        input.workspaceRoot,
+        input.executionsFolder || '.executions',
+        '.executions'
+    );
 
     const unified: UnifiedWorkspaceConfig = {
         ...existing
@@ -79,6 +96,7 @@ export async function buildUnifiedWorkspaceConfig(
 
     setOptionalField(unified, 'host', input.host);
     setOptionalField(unified, 'syncFolder', storedSyncFolder);
+    setOptionalField(unified, 'executionsFolder', storedExecutionsFolder);
     setOptionalField(unified, 'projectId', input.projectId);
     setOptionalField(unified, 'projectName', input.projectName);
 

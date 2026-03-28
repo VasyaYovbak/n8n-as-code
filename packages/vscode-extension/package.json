@@ -228,6 +228,11 @@
           "default": "workflows",
           "description": "Local folder to sync workflows"
         },
+        "n8n.executionsFolder": {
+          "type": "string",
+          "default": ".executions",
+          "description": "Local folder to store downloaded execution payloads"
+        },
         "n8n.projectId": {
           "type": "string",
           "description": "Project ID to sync (managed by the extension; use the Configure command to select)"

@@ -475,6 +475,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 e.affectsConfiguration('n8n.host') ||
                 e.affectsConfiguration('n8n.apiKey') ||
                 e.affectsConfiguration('n8n.syncFolder') ||
+                e.affectsConfiguration('n8n.executionsFolder') ||
                 e.affectsConfiguration('n8n.projectId') ||
                 e.affectsConfiguration('n8n.projectName')
             ) {
@@ -594,6 +595,7 @@ function getConfigRefreshSignature(workspaceRoot?: string): string {
         host: resolvedConfig.host,
         hasApiKey: Boolean(resolvedConfig.apiKey),
         syncFolder: resolvedConfig.syncFolder,
+        executionsFolder: resolvedConfig.executionsFolder,
         projectId: resolvedConfig.projectId,
         projectName: resolvedConfig.projectName,
     });
@@ -823,6 +825,7 @@ async function initializeSyncManager(context: vscode.ExtensionContext) {
         host,
         apiKey,
         syncFolder: folder,
+        executionsFolder: resolvedConfig.executionsFolder || '.executions',
         projectId: projectId!,
         projectName: projectName!,
         instanceIdentifier
