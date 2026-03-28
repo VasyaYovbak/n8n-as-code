@@ -141,3 +141,23 @@ export interface ITestPlan {
     };
     payload: IInferredPayload | null;
 }
+
+export interface IExecutionSummary {
+    id: string;
+    workflowId?: string;
+    workflowName?: string;
+    status?: string;
+    mode?: string;
+    retryOf?: string;
+    startedAt?: string;
+    stoppedAt?: string;
+    finished?: boolean;
+    [key: string]: unknown;
+}
+
+export interface IExecutionListResult {
+    items: IExecutionSummary[];
+    total?: number;
+    nextCursor?: string | null;
+    raw: unknown;
+}

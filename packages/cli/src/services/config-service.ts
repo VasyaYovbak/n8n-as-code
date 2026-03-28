@@ -6,6 +6,7 @@ import path from 'path';
 export interface ILocalConfig {
     host: string;
     syncFolder: string;
+    executionsFolder?: string;
     projectId: string;          // REQUIRED: Active project scope
     projectName: string;        // REQUIRED: Project display name
     instanceIdentifier?: string; // Auto-generated once; stored for consistent paths
@@ -96,6 +97,10 @@ export class ConfigService {
             host,
             syncFolder,
         };
+
+        if (typeof current.executionsFolder === 'string' && current.executionsFolder.trim() !== '') {
+            bootstrapState.executionsFolder = current.executionsFolder;
+        }
 
         if (current.customNodesPath) {
             bootstrapState.customNodesPath = current.customNodesPath;

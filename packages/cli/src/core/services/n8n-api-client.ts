@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import * as https from 'https';
-import { IN8nCredentials, IWorkflow, IProject, ITag, ITriggerInfo, ITestPlan, ITestResult, TriggerType, IInferredPayload, IInferredPayloadField } from '../types.js';
+import { IN8nCredentials, IWorkflow, IProject, ITag, ITriggerInfo, ITestPlan, ITestResult, TriggerType, IInferredPayload, IInferredPayloadField, IExecutionListResult, IExecutionSummary } from '../types.js';
 
 export class N8nApiClient {
     private client: AxiosInstance;
@@ -81,6 +81,85 @@ export class N8nApiClient {
         
         if (process.env.DEBUG) console.debug('[N8nApiClient] getCurrentUser: All attempts failed, returning null');
         return null;
+    }
+
+    async getExecution(executionId: string, includeData: boolean = true): Promise<any> {
+        const res = await this.client.get(`/api/v1/executions/${encodeURIComponent(executionId)}`, {
+            params: {
+                includeData,
+            },
+        });
+        return res.data;
+    }
+
+    async listExecutions(options: {
+        workflowId?: string;
+        projectId?: string;
+        status?: string;
+        limit?: number;
+        includeData?: boolean;
+    } = {}): Promise<IExecutionListResult> {
+        const res = await this.client.get('/api/v1/executions', {
+            params: {
+                includeData: options.includeData ?? false,
+                workflowId: options.workflowId,
+                projectId: options.projectId,
+                status: options.status,
+                limit: options.limit ?? 20,
+            },
+        });
+
+        const payload = res.data;
+        const items = this.extractExecutionItems(payload);
+
+        return {
+            items,
+            total: typeof payload?.count === 'number'
+                ? payload.count
+                : typeof payload?.total === 'number'
+                    ? payload.total
+                    : undefined,
+            nextCursor: typeof payload?.nextCursor === 'string' ? payload.nextCursor : null,
+            raw: payload,
+        };
+    }
+
+    private extractExecutionItems(payload: any): IExecutionSummary[] {
+        if (Array.isArray(payload)) {
+            return payload.filter((item) => item && typeof item === 'object').map((item) => this.normalizeExecutionSummary(item));
+        }
+
+        if (!payload || typeof payload !== 'object') {
+            return [];
+        }
+
+        for (const key of ['data', 'executions', 'results', 'items']) {
+            const value = payload[key];
+            if (Array.isArray(value)) {
+                return value.filter((item) => item && typeof item === 'object').map((item) => this.normalizeExecutionSummary(item));
+            }
+        }
+
+        if (payload.id || payload.executionId) {
+            return [this.normalizeExecutionSummary(payload)];
+        }
+
+        return [];
+    }
+
+    private normalizeExecutionSummary(item: any): IExecutionSummary {
+        return {
+            ...item,
+            id: String(item.id ?? item.executionId ?? 'unknown'),
+            workflowId: item.workflowId ? String(item.workflowId) : undefined,
+            workflowName: typeof item.workflowName === 'string' ? item.workflowName : undefined,
+            status: typeof item.status === 'string' ? item.status : undefined,
+            mode: typeof item.mode === 'string' ? item.mode : undefined,
+            retryOf: item.retryOf ? String(item.retryOf) : undefined,
+            startedAt: typeof item.startedAt === 'string' ? item.startedAt : undefined,
+            stoppedAt: typeof item.stoppedAt === 'string' ? item.stoppedAt : undefined,
+            finished: typeof item.finished === 'boolean' ? item.finished : undefined,
+        };
     }
 
     /**

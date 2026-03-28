@@ -8,6 +8,7 @@ import { SwitchCommand } from './commands/switch.js';
 import { ConvertCommand } from './commands/convert.js';
 import { TestCommand } from './commands/test.js';
 import { TestPlanCommand } from './commands/test-plan.js';
+import { ExecutionCommand } from './commands/execution.js';
 import { registerSkillsCommands } from '@n8n-as-code/skills';
 import chalk from 'chalk';
 
@@ -225,6 +226,31 @@ program.command('test-plan')
     .option('--json', 'Output the test plan as JSON for agents and scripts')
     .action(async (workflowId, options) => {
         process.exit(await new TestPlanCommand().run(workflowId, options));
+    });
+
+const executionsCmd = program
+    .command('executions')
+    .description('Inspect and export recent n8n workflow executions');
+
+executionsCmd.command('list')
+    .description('List recent workflow executions')
+    .option('--workflow-id <id>', 'Filter by workflow ID')
+    .option('--project-id <id>', 'Filter by project ID')
+    .option('--status <status>', 'Filter by execution status')
+    .option('--limit <number>', 'Limit the number of returned executions', (value) => parsePositiveIntegerOption(value, '--limit'))
+    .option('--json', 'Output the executions as JSON')
+    .action(async (options) => {
+        await new ExecutionCommand().listRecent(options);
+    });
+
+executionsCmd.command('download')
+    .description('Download the full payload of a specific execution to a JSON file')
+    .argument('<executionId>', 'Execution ID to download')
+    .option('--output-dir <path>', 'Output directory for stored execution JSON files')
+    .option('--no-include-data', 'Download execution metadata without the heavy data payload')
+    .option('--json', 'Output the saved path as JSON')
+    .action(async (executionId, options) => {
+        await new ExecutionCommand().downloadExecution(executionId, options);
     });
 
 // fetch - Update remote state cache for a specific workflow
