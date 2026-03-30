@@ -56,7 +56,13 @@ export class AiContextGenerator {
     return Math.max(...versions.map((v: any) => Number(v)));
   }
 
-  private getCommandRefs(distTag?: string): { cliCmd: string; skillsCmd: string } {
+  private getCommandRefs(distTag?: string, cliCommandOverride?: string): { cliCmd: string; skillsCmd: string } {
+    if (cliCommandOverride) {
+      return {
+        skillsCmd: `${cliCommandOverride} skills`,
+        cliCmd: cliCommandOverride,
+      };
+    }
     return {
       skillsCmd: distTag ? `npx --yes n8nac@${distTag} skills` : 'npx --yes n8nac skills',
       cliCmd: distTag ? `npx --yes n8nac@${distTag}` : 'npx --yes n8nac',
@@ -155,7 +161,7 @@ export class AiContextGenerator {
       `### Initialization Check`,
       `- Look for \`n8nac-config.json\` in the workspace root.`,
       `- If \`n8nac-config.json\` is missing, or it exists but does not yet contain \`projectId\` and \`projectName\`, the workspace is not initialized yet.`,
-      `- **NEVER tell the user to run \`npx n8nac init\` themselves.** You are the agent — it is YOUR job to run the command.`,
+      `- **NEVER tell the user to run \`${cliCmd} init\` themselves.** You are the agent — it is YOUR job to run the command.`,
       `- Initialization is a 2-step flow: first save credentials with \`${cliCmd} init-auth --host <url> --api-key <key>\`, then select the project with \`${cliCmd} init-project\`.`,
       `- If the user has already provided the n8n host and API key, run \`${cliCmd} init-auth --host <url> --api-key <key>\` immediately.`,
       `- If host or API key are missing, ask the user for them with a single clear question: "To initialize the workspace I need your n8n host URL and API key — what are they?" Then, once you have both values, run \`${cliCmd} init-auth --host <url> --api-key <key>\` yourself.`,
@@ -257,6 +263,7 @@ export class AiContextGenerator {
       `11. For webhook/chat/form workflows: run \`${cliCmd} test-plan <id>\` after pushing to inspect trigger, endpoints, and suggested payload.`,
       `    - Then run \`${cliCmd} test <id>\` with the inferred payload when runtime validation is needed.`,
       `    - If **Class A** (config gap): report what the user needs to configure — do NOT re-edit the code.`,
+      `    - If **runtime-state issue** (webhook test URL not armed, production webhook not registered): do NOT re-edit the code. Resolve the state/arming issue first.`,
       `    - If **Class B** (wiring error): fix the issue, push again, and re-test.`,
       ``,
       `---`,
@@ -265,8 +272,13 @@ export class AiContextGenerator {
     ];
   }
 
-  async generate(projectRoot: string, n8nVersion: string = "Unknown", distTag?: string): Promise<void> {
-    const agentsContent = this.getAgentsContent(n8nVersion, distTag);
+  async generate(
+    projectRoot: string,
+    n8nVersion: string = "Unknown",
+    distTag?: string,
+    options: { cliCommandOverride?: string } = {},
+  ): Promise<void> {
+    const agentsContent = this.getAgentsContent(n8nVersion, distTag, options);
 
     // 1. AGENTS.md (Central documentation)
     this.injectOrUpdate(path.join(projectRoot, 'AGENTS.md'), agentsContent, true);
@@ -300,8 +312,12 @@ export class AiContextGenerator {
     }
   }
 
-  private getAgentsContent(n8nVersion: string, distTag?: string): string {
-    const { cliCmd, skillsCmd: cmd } = this.getCommandRefs(distTag);
+  private getAgentsContent(
+    n8nVersion: string,
+    distTag?: string,
+    options: { cliCommandOverride?: string } = {},
+  ): string {
+    const { cliCmd, skillsCmd: cmd } = this.getCommandRefs(distTag, options.cliCommandOverride);
     return [
       `## 🎭 Role: Expert n8n Workflow Engineer`,
       ``,
@@ -373,7 +389,7 @@ export class AiContextGenerator {
       ``,
       `   ### ⚠️  Critical: Error Classification`,
       ``,
-      `   \`n8nac test\` classifies failures into two classes:`,
+      `   \`n8nac test\` classifies failures into three buckets:`,
       ``,
       `   **Class A — Configuration gap** (exit 0, do NOT iterate):`,
       `   - Missing credentials, unset LLM model, missing environment variable.`,
@@ -381,12 +397,18 @@ export class AiContextGenerator {
       `   - When you see \`⚠  Configuration gap detected (Class A)\`, stop and inform the user what to configure.`,
       `   - **Do NOT re-push or re-edit the workflow** to try to fix a Class A error — you cannot fix credentials in code.`,
       ``,
+      `   **Runtime-state issue** (exit 0, do NOT edit code blindly):`,
+      `   - Typical examples: the webhook test URL is not armed yet, or the production webhook is not registered even though the workflow was just activated.`,
+      `   - For classic Webhook/Form triggers, \`/webhook-test/...\` usually requires a manual arm step in the n8n editor: click \`Execute workflow\` or \`Listen for test event\`, then retry the same request once.`,
+      `   - There is no documented public n8n API in this project for arming test webhooks on your behalf, so treat this step as manual.`,
+      `   - If \`n8nac test --prod\` still reports "webhook is not registered" after \`${cliCmd} workflow activate <id>\`, do not keep editing the workflow. Treat it as a publish/runtime-state issue and verify the workflow state in n8n.`,
+      ``,
       `   **Class B — Wiring error** (exit 1, fix and re-test):`,
       `   - Bad expression, wrong field name, HTTP error caused by the workflow logic.`,
       `   - These ARE fixable by editing the \`.workflow.ts\` file.`,
       `   - When you see \`❌ Workflow execution failed (Class B)\`, fix the wiring, push, and \`n8nac test\` again.`,
       ``,
-      `   > \`validate\` ≠ \`test\`: a workflow can pass static validation but still fail at runtime (Class A/B).`,
+      `   > \`validate\` ≠ \`test\`: a workflow can pass static validation but still fail at runtime (Class A / runtime-state / Class B).`,
       `   > Always run \`test\` after \`verify\` for webhook-driven workflows before declaring the workflow done.`,
       ``,
       `8. **RESOLVE CONFLICTS**: If Push or Pull fails due to a conflict`,
@@ -399,7 +421,7 @@ export class AiContextGenerator {
       `- **Pull before edit**: Always ensure you have latest version before modifying.`,
       `- **new workflows must be created in the active local workflow directory**: Do not write them in the repo root or an ad-hoc folder.`,
       `- **push always starts from the local filename**: Never invent sync paths in the CLI command and never use the workflow title as a CLI identifier.`,
-      `- **inspect then test after push for webhook/chat/form workflows**: Run \`${cliCmd} test-plan <id>\` first, then \`${cliCmd} test <id>\`. A Class A error is not a bug — tell the user. A Class B error is fixable — iterate.`,
+      `- **inspect then test after push for webhook/chat/form workflows**: Run \`${cliCmd} test-plan <id>\` first, then \`${cliCmd} test <id>\`. A Class A error is not a bug — tell the user. A runtime-state issue is also not a code bug — fix the state/arming problem, not the workflow code. A Class B error is fixable — iterate.`,
       ``,
       `> \`pull\` and \`resolve\` always operate on **a single workflow ID**. \`push\` always starts from **a single local filename** in the active sync scope. \`list\` is the only command that covers all workflows at once.`,
       ``,
@@ -461,6 +483,7 @@ export class AiContextGenerator {
       `- Determines whether the workflow is HTTP-testable.`,
       `- Returns the trigger type, endpoints, and a suggested payload inferred from expressions.`,
       `- The suggested payload is heuristic. Review it before relying on it.`,
+      `- For classic Webhook/Form triggers, the test URL often requires a manual arm step in the n8n editor before it will accept a request.`,
       ``,
       `### Step 7: Test Webhook/Chat/Form Workflows After Push`,
       `\`\`\`bash`,
@@ -468,6 +491,7 @@ export class AiContextGenerator {
       `\`\`\``,
       `- **Closes the dev cycle** for HTTP-triggered workflows.`,
       `- **Class A exit 0** — config gap (credentials, model, env var): inform user, do NOT re-edit code.`,
+      `- **Runtime-state exit 0** — webhook test URL not armed / production webhook not registered: resolve the state issue, do NOT re-edit code.`,
       `- **Class B exit 1** — wiring error (bad expression, wrong field): fix, push, re-test.`,
       `- Skip this step for Schedule/polling triggers — they cannot be called via HTTP.`,
       ``,
@@ -493,7 +517,7 @@ export class AiContextGenerator {
       `    position: [250, 300]`,
       `  })`,
       `  MyNode = {`,
-      `    /* parameters from npx --yes n8nac skills node-info */`,
+      `    /* parameters from ${cmd} node-info */`,
       `  };`,
       ``,
       `  @node({`,
@@ -609,9 +633,30 @@ export class AiContextGenerator {
       `\`\`\`bash`,
       `${cliCmd} test <workflowId>              # Trigger test-mode URL, show result`,
       `${cliCmd} test <workflowId> --data '{"key":"value"}'  # Pass request body`,
+      `${cliCmd} test <workflowId> --query '{"key":"value"}' # Explicit query params for GET/HEAD webhooks`,
       `${cliCmd} test <workflowId> --prod       # Use production URL instead`,
       `\`\`\``,
-      `Closes the dev cycle for webhook/chat/form workflows. Exits 0 on success or Class A (config gap — inform user). Exits 1 on Class B (wiring error — fix and re-test). Prefer \`${cliCmd} test-plan\` first when the payload is unclear.`,
+      `Closes the dev cycle for webhook/chat/form workflows. Exits 0 on success, Class A (config gap — inform user), or runtime-state issues such as an unarmed test webhook. Exits 1 only on Class B (wiring error — fix and re-test). Prefer \`${cliCmd} test-plan\` first when the payload is unclear. For GET/HEAD webhooks, prefer \`${cliCmd} test --query <json>\`; \`--data\` also maps to query params for backward compatibility.`,
+      `If \`${cliCmd} test\` says the webhook is not registered, do not blindly rewrite the workflow. First decide whether the test URL needs manual arming in the editor or whether the production webhook is still unpublished.`,
+      ``,
+      `### 🧾 Inspect Executions (debug what happened on the n8n server)`,
+      `\`\`\`bash`,
+      `${cliCmd} execution list --workflow-id <id> --limit 5 --json    # Recent executions for one workflow`,
+      `${cliCmd} execution get <executionId> --include-data --json      # Full execution detail and run data`,
+      `\`\`\``,
+      `Use this immediately after a webhook returns 2xx but the workflow still appears broken. A successful HTTP trigger only means n8n accepted the request; the execution can still fail later inside the workflow.`,
+      ``,
+      `### 🔑 Credential Management (resolve Class A gaps without opening the n8n UI)`,
+      `\`\`\`bash`,
+      `${cliCmd} workflow credential-required <id> --json            # List missing credentials (exit 1 if any missing)`,
+      `${cliCmd} credential schema <type>                            # Discover required fields for a type`,
+      `${cliCmd} credential list --json                              # List existing credentials as JSON`,
+      `${cliCmd} credential create --type <type> --name <name> --file cred.json --json  # Create from file and return metadata`,
+      `${cliCmd} credential delete <id>                              # Delete a credential`,
+      `${cliCmd} workflow activate <id>                              # Activate workflow after credentials provisioned`,
+      `\`\`\``,
+      `**Full autonomous loop:** push workflow → \`workflow credential-required <id> --json\` (exit 1 = missing, act) → \`credential schema <type>\` → ask user for secret values → \`credential create --file\` → \`workflow activate <id>\` → \`test <id>\`. Workflow blocked by a Class A error? Use \`credential schema <type>\` to discover required fields, write them to a JSON file, then run \`credential create\` to provision the credential programmatically. If testing a classic Webhook/Form trigger via the test URL, expect a manual arm step in the n8n editor before the request will succeed. **Never pass secrets inline via --data** — use --file instead (keeps secrets out of shell history).`,
+      `If \`credential create\` fails, read the returned validation message and change the payload before retrying. Never rerun the same failing command unchanged. If a subcommand is unfamiliar, run \`${cliCmd} <subcommand> --help\` instead of inventing flags.`,
       ``,
       `---`,
       ``,
@@ -804,6 +849,63 @@ If you're unsure about any node:
    npx --yes n8nac skills node-info "nodeName"
    \`\`\`
 
+## 🔑 Credential Management
+
+When a workflow is blocked because a credential is missing, resolve it without opening the n8n UI:
+
+**Full autonomous loop:**
+
+1. **Detect missing credentials for a workflow (exit 1 = act, exit 0 = all present):**
+   \`\`\`bash
+   npx --yes n8nac workflow credential-required <workflowId> --json
+   \`\`\`
+   Output: \`[{ nodeName, credentialType, credentialName, exists }]\`  
+   Run this immediately after pushing. Exit code 1 means at least one credential is missing.
+
+2. **Discover required fields for a credential type:**
+   \`\`\`bash
+   npx --yes n8nac credential schema <type>
+   \`\`\`
+   Example: \`npx --yes n8nac credential schema notionApi\`  
+   Use the output to build the credential data file. Ask the user for secret values — never guess.
+
+3. **Create the credential from a file (preferred — keeps secrets out of shell history):**
+   \`\`\`bash
+   npx --yes n8nac credential create --type <type> --name "My Credential" --file cred.json --json
+   \`\`\`
+
+4. **Activate the workflow after credentials are provisioned:**
+   \`\`\`bash
+   npx --yes n8nac workflow activate <workflowId>
+   \`\`\`
+
+5. **Run the test:**
+   \`\`\`bash
+   npx --yes n8nac test <workflowId>
+   \`\`\`
+   A Class A error that was blocking the test should now be resolved.
+   If the workflow uses a classic Webhook or Form trigger and the test URL says the webhook is not registered, this is usually a manual arm/listen issue in the n8n editor rather than a code bug.
+   Click \`Execute workflow\` or \`Listen for test event\` in the editor, then retry the same test request once.
+   If the trigger uses GET or HEAD and the workflow reads from \`$json.query\`, prefer:
+   \`\`\`bash
+   npx --yes n8nac test <workflowId> --query '{"chatInput":"hello"}'
+   \`\`\`
+
+6. **If the webhook call succeeds but the workflow still misbehaves, inspect executions:**
+   \`\`\`bash
+   npx --yes n8nac execution list --workflow-id <workflowId> --limit 5 --json
+   npx --yes n8nac execution get <executionId> --include-data --json
+   \`\`\`
+   Use this to debug server-side execution failures without opening the n8n UI.
+
+**Other credential commands:**
+   \`\`\`bash
+   npx --yes n8nac credential list --json               # List all existing credentials as JSON
+   npx --yes n8nac workflow deactivate <workflowId>     # Deactivate a workflow
+   \`\`\`
+
+If \`credential create\` fails, read the returned validation message and change the payload before retrying. Never rerun the same failing command unchanged. If a subcommand is unfamiliar, run \`npx --yes n8nac <subcommand> --help\` instead of inventing flags.
+
 ${this.getSharedResponseFormatLines(cliCmd).join('\n')}
 `;
   }
@@ -845,6 +947,10 @@ Use this skill only for explicit n8n workflow work.
 - Use \`action: "skills"\` whenever you need node search or schema details.
 - Never guess node parameters. The schema lookup is the source of truth.
 - Treat \`AGENTS.md\` as the authoritative workflow-engineering protocol once this skill is active.
+- When a workflow fails due to missing credentials (Class A), identify the missing credentials clearly and use the documented \`n8nac\` CLI commands from \`AGENTS.md\` (for example \`npx --yes n8nac workflow credential-required <workflowId> --json\`, \`npx --yes n8nac credential schema <type>\`, \`npx --yes n8nac credential create --type <type> --name "<name>" --file cred.json --json\`, and \`npx --yes n8nac workflow activate <workflowId>\`). Do not invent unsupported \`n8nac\` tool actions or CLI flags; use \`--help\` if you are unsure.
+- When \`n8nac test\` reports that a webhook is not registered, treat that as a runtime-state issue first, not as a workflow-code bug. For classic Webhook/Form triggers, the test URL usually requires a manual arm step in the n8n editor (\`Execute workflow\` or \`Listen for test event\`). There is no documented public API here to arm test webhooks automatically.
+- When a webhook call succeeds but the workflow still seems broken, inspect the resulting execution with the documented CLI commands from \`AGENTS.md\` (for example \`npx --yes n8nac execution list --workflow-id <workflowId> --limit 5 --json\` then \`npx --yes n8nac execution get <executionId> --include-data --json\`).
+- For GET/HEAD webhooks, prefer \`n8nac test --query <json>\` when the workflow reads from \`$json.query\`. Do not invent flags like \`--query\` unless they are documented in the current \`--help\`.
 
 ${workflowMapLines.join('\n')}
 

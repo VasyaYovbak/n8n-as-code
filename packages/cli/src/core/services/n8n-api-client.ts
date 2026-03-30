@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import * as https from 'https';
-import { IN8nCredentials, IWorkflow, IProject, ITag, ITriggerInfo, ITestPlan, ITestResult, TriggerType, IInferredPayload, IInferredPayloadField } from '../types.js';
+import { IN8nCredentials, IWorkflow, IProject, ITag, ITriggerInfo, ITestPlan, ITestResult, TriggerType, IInferredPayload, IInferredPayloadField, IExecutionDetails, IExecutionList, IExecutionSummary, ExecutionStatus } from '../types.js';
 
 export class N8nApiClient {
     private client: AxiosInstance;
@@ -572,13 +572,126 @@ export class N8nApiClient {
         }
     }
 
-    async activateWorkflow(id: string, active: boolean): Promise<boolean> {
+    async activateWorkflow(id: string, active: boolean): Promise<IWorkflow | null> {
         try {
-            await this.client.post(`/api/v1/workflows/${id}/activate`, { active });
+            const endpoint = active ? 'activate' : 'deactivate';
+            const res = await this.client.post(`/api/v1/workflows/${id}/${endpoint}`);
+            if (res.data && typeof res.data === 'object') {
+                return res.data as IWorkflow;
+            }
+            return await this.getWorkflow(id);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // ─── Credentials ────────────────────────────────────────────────────────────
+
+    async getCredentialSchema(typeName: string): Promise<Record<string, unknown>> {
+        const res = await this.client.get(`/api/v1/credentials/schema/${typeName}`);
+        return res.data;
+    }
+
+    async listCredentials(): Promise<Array<Record<string, unknown>>> {
+        const results: Array<Record<string, unknown>> = [];
+        let cursor: string | undefined;
+        do {
+            const params: Record<string, string> = cursor ? { cursor } : {};
+            const res = await this.client.get('/api/v1/credentials', { params });
+            const page = res.data;
+            results.push(...(page.data ?? []));
+            cursor = page.nextCursor;
+        } while (cursor);
+        return results;
+    }
+
+    async getCredential(id: string): Promise<Record<string, unknown>> {
+        const res = await this.client.get(`/api/v1/credentials/${id}`);
+        return res.data;
+    }
+
+    async createCredential(payload: {
+        type: string;
+        name: string;
+        data: Record<string, unknown>;
+        projectId?: string;
+    }): Promise<Record<string, unknown>> {
+        const res = await this.client.post('/api/v1/credentials', payload);
+        return res.data;
+    }
+
+    async deleteCredential(id: string): Promise<boolean> {
+        try {
+            await this.client.delete(`/api/v1/credentials/${id}`);
             return true;
         } catch (error) {
             return false;
         }
+    }
+
+    // ─── Executions ───────────────────────────────────────────────────────────
+
+    async listExecutions(options: {
+        workflowId?: string;
+        status?: ExecutionStatus;
+        projectId?: string;
+        limit?: number;
+        cursor?: string;
+        includeData?: boolean;
+    } = {}): Promise<IExecutionList> {
+        const params: Record<string, string | number | boolean> = {};
+        if (options.workflowId) params.workflowId = options.workflowId;
+        if (options.status) params.status = options.status;
+        if (options.projectId) params.projectId = options.projectId;
+        if (options.limit !== undefined) params.limit = options.limit;
+        if (options.cursor) params.cursor = options.cursor;
+        if (options.includeData) params.includeData = true;
+
+        const res = await this.client.get('/api/v1/executions', { params });
+        const page = res.data ?? {};
+
+        return {
+            data: (page.data ?? []).map((execution: any): IExecutionSummary => ({
+                id: String(execution.id),
+                finished: Boolean(execution.finished),
+                mode: String(execution.mode ?? ''),
+                retryOf: execution.retryOf != null ? String(execution.retryOf) : null,
+                retrySuccessId: execution.retrySuccessId != null ? String(execution.retrySuccessId) : null,
+                startedAt: String(execution.startedAt ?? ''),
+                stoppedAt: execution.stoppedAt != null ? String(execution.stoppedAt) : null,
+                workflowId: String(execution.workflowId ?? ''),
+                waitTill: execution.waitTill != null ? String(execution.waitTill) : null,
+                customData: execution.customData,
+                status: String(execution.status ?? 'unknown') as ExecutionStatus,
+            })),
+            nextCursor: page.nextCursor ?? null,
+        };
+    }
+
+    async getExecution(id: string, options: { includeData?: boolean } = {}): Promise<IExecutionDetails> {
+        const params: Record<string, boolean> = {};
+        if (options.includeData) params.includeData = true;
+
+        const res = await this.client.get(`/api/v1/executions/${id}`, { params });
+        const execution = res.data ?? {};
+
+        return {
+            id: String(execution.id),
+            finished: Boolean(execution.finished),
+            mode: String(execution.mode ?? ''),
+            retryOf: execution.retryOf != null ? String(execution.retryOf) : null,
+            retrySuccessId: execution.retrySuccessId != null ? String(execution.retrySuccessId) : null,
+            startedAt: String(execution.startedAt ?? ''),
+            stoppedAt: execution.stoppedAt != null ? String(execution.stoppedAt) : null,
+            workflowId: String(execution.workflowId ?? ''),
+            waitTill: execution.waitTill != null ? String(execution.waitTill) : null,
+            customData: execution.customData,
+            status: String(execution.status ?? 'unknown') as ExecutionStatus,
+            data: execution.data,
+            workflowData: execution.workflowData,
+            executedNode: execution.executedNode,
+            triggerNode: execution.triggerNode,
+        };
     }
 
     async getHealth(): Promise<{ version: string }> {
@@ -682,10 +795,12 @@ export class N8nApiClient {
             const nodeIdString: string | undefined =
                 typeof node.id === 'string' && node.id ? node.id : undefined;
 
-            const rawPath: string | undefined =
-                typeof params.path === 'string' && params.path
-                    ? params.path
-                    : webhookId ?? nodeIdString;
+            const hasExplicitPath = typeof params.path === 'string' && params.path.length > 0;
+            const rawPath: string | undefined = hasExplicitPath
+                ? params.path
+                : webhookId ?? nodeIdString;
+            const pathSource: ITriggerInfo['pathSource'] =
+                hasExplicitPath ? 'explicit' : webhookId ? 'webhookId' : 'nodeId';
 
             const httpMethod: string =
                 typeof params.httpMethod === 'string'
@@ -694,9 +809,12 @@ export class N8nApiClient {
 
             return {
                 type: triggerType,
+                workflowId: workflow.id,
                 nodeId: node.id ?? '',
                 nodeName: node.name ?? '',
+                webhookId,
                 webhookPath: triggerType !== 'schedule' && triggerType !== 'unknown' ? rawPath : undefined,
+                pathSource: triggerType !== 'schedule' && triggerType !== 'unknown' ? pathSource : undefined,
                 httpMethod: triggerType === 'webhook' ? httpMethod : undefined,
             };
         }
@@ -718,6 +836,37 @@ export class N8nApiClient {
             .join('/');
     }
 
+    private resolveWebhookPath(trigger: ITriggerInfo): string {
+        const rawPath = (trigger.webhookPath ?? '').replace(/^\/+|\/+$/g, '');
+        if (!rawPath) return '';
+
+        const encodedRawPath = this.normalizeWebhookPath(rawPath);
+        if (!encodedRawPath) return '';
+
+        if (trigger.pathSource !== 'explicit') {
+            return encodedRawPath;
+        }
+
+        if (trigger.webhookId) {
+            const encodedWebhookId = encodeURIComponent(trigger.webhookId);
+            if (rawPath === trigger.webhookId || rawPath.startsWith(`${trigger.webhookId}/`)) {
+                return encodedRawPath;
+            }
+            return `${encodedWebhookId}/${encodedRawPath}`;
+        }
+
+        if (trigger.workflowId && trigger.nodeName) {
+            const encodedWorkflowId = encodeURIComponent(trigger.workflowId);
+            const encodedNodeName = encodeURIComponent(trigger.nodeName.toLowerCase());
+            if (rawPath === trigger.workflowId || rawPath.startsWith(`${trigger.workflowId}/`)) {
+                return encodedRawPath;
+            }
+            return `${encodedWorkflowId}/${encodedNodeName}/${encodedRawPath}`;
+        }
+
+        return encodedRawPath;
+    }
+
     /**
      * Build the test-mode URL for a given trigger.
      *
@@ -728,7 +877,7 @@ export class N8nApiClient {
      */
     buildTestUrl(trigger: ITriggerInfo): string {
         const base = (this.client.defaults.baseURL ?? '').replace(/\/$/, '');
-        const encodedPath = this.normalizeWebhookPath(trigger.webhookPath);
+        const encodedPath = this.resolveWebhookPath(trigger);
 
         switch (trigger.type) {
             case 'webhook':
@@ -759,7 +908,7 @@ export class N8nApiClient {
      */
     buildProductionUrl(trigger: ITriggerInfo): string {
         const base = (this.client.defaults.baseURL ?? '').replace(/\/$/, '');
-        const encodedPath = this.normalizeWebhookPath(trigger.webhookPath);
+        const encodedPath = this.resolveWebhookPath(trigger);
 
         switch (trigger.type) {
             case 'webhook':
@@ -826,6 +975,16 @@ export class N8nApiClient {
             };
         }
 
+        const payload = this.inferExpectedPayload(workflow);
+        if (triggerInfo.type === 'webhook' || triggerInfo.type === 'form') {
+            payload.notes.push(
+                'For classic Webhook/Form triggers, the test URL often requires a manual arm step in the n8n editor before it will accept a request.',
+            );
+            payload.notes.push(
+                'Use the production URL only after the workflow is active/published.',
+            );
+        }
+
         return {
             workflowId,
             workflowName: workflow.name,
@@ -836,7 +995,7 @@ export class N8nApiClient {
                 testUrl: this.buildTestUrl(triggerInfo),
                 productionUrl: this.buildProductionUrl(triggerInfo),
             },
-            payload: this.inferExpectedPayload(workflow),
+            payload,
         };
     }
 
@@ -852,7 +1011,7 @@ export class N8nApiClient {
      */
     async testWorkflow(
         workflowId: string,
-        options?: { data?: unknown; prod?: boolean }
+        options?: { data?: unknown; query?: unknown; prod?: boolean }
     ): Promise<ITestResult> {
         // 1. Fetch workflow
         let workflow: IWorkflow | null;
@@ -921,13 +1080,14 @@ export class N8nApiClient {
         // 4. Call the webhook
         const method = (triggerInfo.httpMethod ?? 'POST').toUpperCase();
         const body = options?.data ?? {};
+        const query = options?.query;
 
         try {
             const requestConfig: any = {
                 method,
                 url,
                 data: ['GET', 'HEAD'].includes(method) ? undefined : body,
-                params: ['GET', 'HEAD'].includes(method) ? (body as any) : undefined,
+                params: query ?? (['GET', 'HEAD'].includes(method) ? (body as any) : undefined),
                 validateStatus: () => true, // Don't throw on non-2xx
                 timeout: 30_000,             // Prevent indefinite hangs (e.g. chat trigger awaiting first message)
                 // Reuse the shared httpsAgent (same TLS policy as API calls).
@@ -959,6 +1119,9 @@ export class N8nApiClient {
                 : String(responseData);
 
             const errorClass = this.classifyTestError(statusCode, errorMessage, responseData);
+            const notes = errorClass === 'runtime-state'
+                ? this.buildRuntimeStateNotes(triggerInfo, !!prod, responseData)
+                : undefined;
 
             return {
                 success: false,
@@ -968,6 +1131,7 @@ export class N8nApiClient {
                 responseData,
                 errorMessage,
                 errorClass,
+                notes,
             };
         } catch (err: any) {
             return {
@@ -989,8 +1153,16 @@ export class N8nApiClient {
      * Class B (wiring-error): bad expression, wrong field reference, HTTP failure.
      *   → Agent should fix and re-test.
      */
-    private classifyTestError(statusCode: number, message: string, _data: unknown): 'config-gap' | 'wiring-error' {
+    private classifyTestError(
+        statusCode: number,
+        message: string,
+        data: unknown,
+    ): 'config-gap' | 'runtime-state' | 'wiring-error' {
         const lc = message.toLowerCase();
+        const hint =
+            data && typeof data === 'object' && typeof (data as any).hint === 'string'
+                ? String((data as any).hint).toLowerCase()
+                : '';
 
         const configGapPatterns = [
             'credential',
@@ -1014,13 +1186,64 @@ export class N8nApiClient {
 
         // 401 indicates an authentication/credential issue (config gap)
         if (statusCode === 401) return 'config-gap';
+        // 404 webhook-not-registered is usually not a workflow wiring bug:
+        // - test URL => webhook was not armed in the editor
+        // - production URL => workflow is not active/published yet, or n8n has not registered it
+        if (
+            statusCode === 404 &&
+            lc.includes('requested webhook') &&
+            (hint.includes("click the 'execute workflow' button") ||
+                hint.includes('workflow must be active for a production url to run successfully') ||
+                lc.includes('is not registered'))
+        ) {
+            return 'runtime-state';
+        }
         // 403 from n8n's webhook-test typically means the workflow is not currently
         // open in the n8n editor (test-mode webhooks are only active while the
         // workflow is open). This is a wiring/state concern, not a credential gap.
-        // Leave it to fall through to 'wiring-error' so the exit code is 1 and the
-        // user gets explicit feedback to open the workflow in the n8n UI.
+        if (statusCode === 403 && hint.includes("click the 'execute workflow' button")) {
+            return 'runtime-state';
+        }
 
         return 'wiring-error';
+    }
+
+    private buildRuntimeStateNotes(
+        triggerInfo: ITriggerInfo,
+        prod: boolean,
+        data: unknown,
+    ): string[] {
+        const notes: string[] = [];
+        const hint =
+            data && typeof data === 'object' && typeof (data as any).hint === 'string'
+                ? String((data as any).hint)
+                : '';
+
+        if (!prod && (triggerInfo.type === 'webhook' || triggerInfo.type === 'form')) {
+            notes.push(
+                'The test URL for this trigger is temporary. n8n only registers it after you click "Execute workflow" or "Listen for test event" in the editor.',
+            );
+            notes.push(
+                'This arm/listen step is manual. n8n-as-code does not have a documented public API to register test webhooks on your behalf.',
+            );
+            notes.push('Do not edit or re-push the workflow just because this test URL returned 404/403.');
+            notes.push('Once the workflow is armed in the editor, retry the same test request once.');
+        } else if (prod) {
+            notes.push('The production webhook should exist only when the workflow is active/published in n8n.');
+            notes.push(
+                'If `workflow activate` already succeeded but the production URL still says the webhook is not registered, treat this as a publish/runtime-state issue rather than a workflow-code bug.',
+            );
+            notes.push('Do not keep editing the workflow blindly. Confirm the workflow is active in n8n before retrying.');
+        } else {
+            notes.push('This looks like a runtime-state issue in n8n rather than a bug in the workflow code.');
+        }
+
+        if (hint) {
+            notes.push(`n8n hint: ${hint}`);
+        }
+
+        notes.push('No workflow execution started yet, so `execution list/get` will not help until the trigger is accepted.');
+        return notes;
     }
 
     private inferExpectedPayload(workflow: IWorkflow): IInferredPayload {
