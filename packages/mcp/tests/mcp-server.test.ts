@@ -2,15 +2,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
-import { SkillsMcpService } from '../src/services/mcp-service';
+import { N8nAsCodeMcpService } from '../src/services/mcp-service';
 
-describe('SkillsMcpService', () => {
+describe('N8nAsCodeMcpService', () => {
     let tempDir: string;
-    let service: SkillsMcpService;
+    let service: N8nAsCodeMcpService;
 
     beforeEach(() => {
         tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'n8nac-mcp-'));
-        service = new SkillsMcpService({ assetsDir: tempDir });
+        service = new N8nAsCodeMcpService({ cwd: tempDir });
     });
 
     afterEach(() => {
@@ -155,61 +155,5 @@ describe('SkillsMcpService', () => {
 
         expect(cliSpy).toHaveBeenCalledTimes(1);
         expect(result.valid).toBe(true);
-    });
-
-    test('lists executions via CLI', async () => {
-        const mockExecutions = {
-            success: true,
-            parsedJson: {
-                items: [{ id: '123', workflowId: 'wf-1', status: 'success' }],
-                total: 1,
-            },
-        };
-        const cliSpy = jest.spyOn(service as any, 'runCliCommand').mockResolvedValue(mockExecutions);
-
-        const result = await service.listExecutions({ workflowId: 'wf-1', projectId: 'proj-1', status: 'success', limit: 5 });
-
-        expect(cliSpy).toHaveBeenCalledWith([
-            'executions',
-            'list',
-            '--json',
-            '--workflow-id',
-            'wf-1',
-            '--project-id',
-            'proj-1',
-            '--status',
-            'success',
-            '--limit',
-            '5',
-        ], true);
-        expect(result).toEqual(mockExecutions);
-    });
-
-    test('downloads execution payload via CLI', async () => {
-        const mockDownload = {
-            success: true,
-            parsedJson: {
-                executionId: '123',
-                path: '/tmp/executions/123.json',
-            },
-        };
-        const cliSpy = jest.spyOn(service as any, 'runCliCommand').mockResolvedValue(mockDownload);
-
-        const result = await service.downloadExecution({
-            executionId: '123',
-            outputDir: '.executions',
-            includeData: false,
-        });
-
-        expect(cliSpy).toHaveBeenCalledWith([
-            'executions',
-            'download',
-            '123',
-            '--json',
-            '--output-dir',
-            '.executions',
-            '--no-include-data',
-        ], true);
-        expect(result).toEqual(mockDownload);
     });
 });

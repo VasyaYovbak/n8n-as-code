@@ -3,7 +3,7 @@ import path from 'path';
 import Table from 'cli-table3';
 import chalk from 'chalk';
 import { BaseCommand } from './base.js';
-import { IExecutionListResult } from '../core/index.js';
+import { ExecutionStatus } from '../core/index.js';
 
 export interface ExecutionListCommandOptions {
     workflowId?: string;
@@ -24,17 +24,23 @@ export class ExecutionCommand extends BaseCommand {
         const result = await this.client.listExecutions({
             workflowId: options.workflowId,
             projectId: options.projectId,
-            status: options.status,
+            status: options.status as ExecutionStatus | undefined,
             limit: options.limit,
             includeData: false,
         });
 
+        const legacyResult = {
+            items: result.data,
+            total: result.total,
+            nextCursor: result.nextCursor,
+        };
+
         if (options.json) {
-            console.log(JSON.stringify(result, null, 2));
+            console.log(JSON.stringify(legacyResult, null, 2));
             return;
         }
 
-        if (result.items.length === 0) {
+        if (result.data.length === 0) {
             console.log(chalk.yellow('No executions found.'));
             return;
         }
@@ -50,7 +56,7 @@ export class ExecutionCommand extends BaseCommand {
             wordWrap: true,
         });
 
-        for (const item of result.items) {
+        for (const item of result.data) {
             table.push([
                 item.id,
                 item.workflowName || item.workflowId || '-',
@@ -61,13 +67,13 @@ export class ExecutionCommand extends BaseCommand {
         }
 
         console.log('\n' + table.toString() + '\n');
-        if (typeof result.total === 'number') {
-            console.log(chalk.dim(`Total matching executions: ${result.total}`));
+        if (typeof legacyResult.total === 'number') {
+            console.log(chalk.dim(`Total matching executions: ${legacyResult.total}`));
         }
     }
 
     async downloadExecution(executionId: string, options: ExecutionDownloadCommandOptions): Promise<void> {
-        const payload = await this.client.getExecution(executionId, options.includeData ?? true);
+        const payload = await this.client.getExecution(executionId, { includeData: options.includeData ?? true });
         const outputDir = this.resolveExecutionsDirectory(options.outputDir);
         fs.mkdirSync(outputDir, { recursive: true });
 
@@ -96,5 +102,69 @@ export class ExecutionCommand extends BaseCommand {
             : '';
 
         return path.resolve(process.cwd(), configuredFolder || '.executions');
+    }
+
+    async list(options: {
+        workflowId?: string;
+        status?: ExecutionStatus;
+        projectId?: string;
+        limit?: number;
+        cursor?: string;
+        includeData?: boolean;
+        json?: boolean;
+    } = {}): Promise<void> {
+        try {
+            const result = await this.client.listExecutions(options);
+
+            if (options.json) {
+                console.log(JSON.stringify(result, null, 2));
+                return;
+            }
+
+            if (result.data.length === 0) {
+                console.log(chalk.yellow('No executions found.'));
+                return;
+            }
+
+            const table = new Table({
+                head: [
+                    chalk.bold('ID'),
+                    chalk.bold('Status'),
+                    chalk.bold('Mode'),
+                    chalk.bold('Workflow'),
+                    chalk.bold('Started'),
+                    chalk.bold('Stopped'),
+                ],
+                wordWrap: true,
+            });
+
+            for (const execution of result.data) {
+                table.push([
+                    execution.id,
+                    execution.status,
+                    execution.mode,
+                    execution.workflowName || execution.workflowId || '-',
+                    execution.startedAt || '-',
+                    execution.stoppedAt || '-',
+                ]);
+            }
+
+            console.log(`\n${table.toString()}\n`);
+            console.log(chalk.dim(`Total returned: ${typeof result.total === 'number' ? result.total : result.data.length}`));
+            if (result.nextCursor) {
+                console.log(chalk.dim(`Next cursor: ${result.nextCursor}`));
+            }
+        } catch (error) {
+            this.exitWithError('Failed to list executions', error);
+        }
+    }
+
+    async get(id: string, options: { includeData?: boolean; json?: boolean } = {}): Promise<void> {
+        try {
+            const execution = await this.client.getExecution(id, { includeData: options.includeData });
+            console.log(JSON.stringify(execution, null, 2));
+        } catch (error) {
+            this.exitWithError(`Failed to fetch execution ${id}`, error);
+        }
     }
 }

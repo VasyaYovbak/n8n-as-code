@@ -92,6 +92,24 @@ describe('TestPlanCommand.run()', () => {
         const output = consoleSpy.mock.calls.flat().join(' ');
         expect(output).toMatch(/testable via HTTP/i);
         expect(output).toContain('https://n8n.test/webhook-test/my-path');
+        expect(output).toMatch(/manual arm step|Listen for test event|Execute workflow/i);
+    });
+
+    it('prints a GET/query hint for GET webhooks', async () => {
+        vi.spyOn(cmd['client'], 'getTestPlan').mockResolvedValue({
+            ...TESTABLE_PLAN,
+            triggerInfo: {
+                ...TESTABLE_PLAN.triggerInfo!,
+                httpMethod: 'GET',
+            },
+        });
+
+        const code = await cmd.run('wf-1', {});
+        expect(code).toBe(0);
+
+        const output = consoleSpy.mock.calls.flat().join(' ');
+        expect(output).toContain('n8nac test wf-1 --query');
+        expect(output).toMatch(/maps to query params/i);
     });
 
     it('returns exit code 1 for a non-testable workflow (human output)', async () => {

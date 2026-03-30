@@ -63,10 +63,25 @@ export class TestPlanCommand extends BaseCommand {
             console.log(chalk.dim('Prod URL: ') + chalk.cyan(plan.endpoints.productionUrl));
         }
 
+        if (trigger.type === 'webhook' || trigger.type === 'form') {
+            console.log(chalk.dim('\nActivation notes:'));
+            console.log(chalk.dim(`- Test URLs are temporary and usually require a manual arm step in the n8n editor.`));
+            console.log(chalk.dim(`- Click "Execute workflow" or "Listen for test event" before calling the test URL.`));
+            console.log(chalk.dim(`- Production URLs should work only after the workflow is active/published.`));
+        }
+
         if (plan.payload) {
             console.log(chalk.dim('\nSuggested payload:'));
             console.log(chalk.white(JSON.stringify(plan.payload.inferred, null, 2)));
             console.log(chalk.dim(`Confidence: ${plan.payload.confidence}`));
+
+            const httpMethod = (trigger.httpMethod ?? 'POST').toUpperCase();
+            if (httpMethod === 'GET' || httpMethod === 'HEAD') {
+                console.log(chalk.dim('\nRequest hint:'));
+                console.log(chalk.dim(`- This trigger uses ${httpMethod}.`));
+                console.log(chalk.dim(`- Run \`n8nac test ${workflowId} --query '<json>'\` for explicit query params.`));
+                console.log(chalk.dim(`- \`--data\` also maps to query params for ${httpMethod} requests.`));
+            }
 
             if (plan.payload.fields.length > 0) {
                 console.log(chalk.dim('\nObserved fields:'));

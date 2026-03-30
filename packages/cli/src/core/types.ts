@@ -72,10 +72,14 @@ export type TriggerType = 'webhook' | 'form' | 'chat' | 'schedule' | 'unknown';
 /** Information extracted from a workflow's trigger node */
 export interface ITriggerInfo {
     type: TriggerType;
+    workflowId?: string;
     nodeId: string;
     nodeName: string;
+    webhookId?: string;
     /** Path segment used to build the webhook URL (undefined for schedule/unknown) */
     webhookPath?: string;
+    /** Where the resolved webhookPath came from in the workflow definition */
+    pathSource?: 'explicit' | 'webhookId' | 'nodeId';
     /** HTTP method accepted by the trigger (default 'GET' for webhook) */
     httpMethod?: string;
 }
@@ -85,6 +89,9 @@ export type TestErrorClass =
     /** Legitimate config gap: missing credentials, unset LLM model, env vars.
      *  NOT fixable by the agent — inform the user instead. */
     | 'config-gap'
+    /** Runtime state issue: webhook test URL not armed, production webhook not registered yet,
+     *  or another n8n state/publish condition that is not fixable by editing workflow code. */
+    | 'runtime-state'
     /** Structural wiring error: bad expression, wrong field name, HTTP failure.
      *  Agent SHOULD attempt to fix and re-test. */
     | 'wiring-error'
@@ -142,22 +149,50 @@ export interface ITestPlan {
     payload: IInferredPayload | null;
 }
 
+// ── Executions ────────────────────────────────────────────────────────────────
+
+export type ExecutionStatus =
+    | 'canceled'
+    | 'crashed'
+    | 'error'
+    | 'new'
+    | 'running'
+    | 'success'
+    | 'unknown'
+    | 'waiting';
+
 export interface IExecutionSummary {
     id: string;
+    finished?: boolean;
+    mode?: string;
+    retryOf?: string | null;
+    retrySuccessId?: string | null;
+    startedAt?: string;
+    stoppedAt?: string | null;
     workflowId?: string;
     workflowName?: string;
-    status?: string;
-    mode?: string;
-    retryOf?: string;
-    startedAt?: string;
-    stoppedAt?: string;
-    finished?: boolean;
+    waitTill?: string | null;
+    customData?: Record<string, unknown>;
+    status?: ExecutionStatus | string;
     [key: string]: unknown;
+}
+
+export interface IExecutionList {
+    data: IExecutionSummary[];
+    nextCursor: string | null;
+    total?: number;
+}
+
+export interface IExecutionDetails extends IExecutionSummary {
+    data?: Record<string, unknown>;
+    workflowData?: Record<string, unknown>;
+    executedNode?: string;
+    triggerNode?: string;
 }
 
 export interface IExecutionListResult {
     items: IExecutionSummary[];
     total?: number;
     nextCursor?: string | null;
-    raw: unknown;
+    raw?: unknown;
 }

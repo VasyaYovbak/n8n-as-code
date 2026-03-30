@@ -8,6 +8,8 @@ import { SwitchCommand } from './commands/switch.js';
 import { ConvertCommand } from './commands/convert.js';
 import { TestCommand } from './commands/test.js';
 import { TestPlanCommand } from './commands/test-plan.js';
+import { CredentialCommand } from './commands/credential.js';
+import { WorkflowCommand } from './commands/workflow.js';
 import { ExecutionCommand } from './commands/execution.js';
 import { registerSkillsCommands } from '@n8n-as-code/skills';
 import chalk from 'chalk';
@@ -17,6 +19,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { parsePositiveIntegerOption } from './utils/option-parsers.js';
+import { spawn } from 'child_process';
 
 async function readSecretFromStdin(): Promise<string> {
     const chunks: Buffer[] = [];
@@ -68,7 +71,20 @@ const getSkillsAssetsDir = (): string => {
     }
 };
 
+const getMcpEntry = (): string => {
+    try {
+        const require = createRequire(import.meta.url);
+        const mcpPkg = require.resolve('@n8n-as-code/mcp/package.json');
+        return join(dirname(mcpPkg), 'dist', 'cli.js');
+    } catch {
+        const __dirname = dirname(fileURLToPath(import.meta.url));
+        return join(__dirname, '..', '..', 'mcp', 'dist', 'cli.js');
+    }
+};
+
 const program = new Command();
+program.showSuggestionAfterError(true);
+program.showHelpAfterError('(run with --help for usage details)');
 
 program
     .name('n8nac')
@@ -208,14 +224,28 @@ program.command('verify')
 program.command('test')
     .description(
         'Trigger a workflow via its webhook/chat/form URL and report the outcome.\n' +
-        'Distinguishes config gaps (Class A: missing credentials/model) from wiring errors\n' +
+        'Distinguishes config gaps (Class A: missing credentials/model), runtime state issues\n' +
+        '(test webhook not armed / production webhook not registered), and wiring errors\n' +
         '(Class B: bad expressions, wrong field names).\n' +
         'Class A → exit 0 (inform user, do not block).\n' +
+        'Runtime state issue → exit 0 (do not edit code blindly).\n' +
         'Class B → exit 1 (fixable, agent should iterate).'
     )
     .argument('<workflowId>', 'Workflow ID to test')
     .option('--prod', 'Call the production webhook URL instead of the test URL')
-    .option('--data <json>', 'JSON body to send with the request (default: {})')
+    .option('--data <json>', 'JSON body to send with the request (for GET/HEAD webhooks this becomes query params unless --query is provided)')
+    .option('--query <json>', 'JSON query parameters to send with the request (useful for GET/HEAD webhooks)')
+    .addHelpText('after', `
+Examples:
+  $ n8nac test <workflowId>
+  $ n8nac test <workflowId> --data '{"chatInput":"hello"}'
+  $ n8nac test <workflowId> --prod --query '{"chatInput":"hello"}'
+
+Notes:
+  - For GET/HEAD webhooks, \`--data\` is sent as query parameters for backward compatibility.
+  - Prefer \`--query\` when the workflow reads from \`$json.query\` to make the intent explicit.
+  - For classic Webhook/Form test URLs, you may need to manually arm the workflow in the n8n editor before the test URL will accept a request.
+`)
     .action(async (workflowId, options) => {
         process.exit(await new TestCommand().run(workflowId, options));
     });
@@ -298,6 +328,199 @@ program.command('convert-batch')
             process.exit(1);
         }
         await new ConvertCommand().batch(directory, options);
+    });
+
+program.command('mcp')
+    .description('Start the dedicated n8n-as-code MCP server')
+    .option('--cwd <path>', 'Project directory used to resolve n8nac-config.json and n8nac-custom-nodes.json', process.env.N8N_AS_CODE_PROJECT_DIR)
+    .action(async (options: { cwd?: string }) => {
+        const mcpEntry = getMcpEntry();
+        const args = [mcpEntry];
+        if (options.cwd) {
+            args.push('--cwd', options.cwd);
+        }
+
+        const child = spawn(process.execPath, args, {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: 'inherit',
+        });
+
+        child.on('exit', (code, signal) => {
+            if (signal) {
+                process.kill(process.pid, signal);
+                return;
+            }
+            process.exit(code ?? 1);
+        });
+
+        child.on('error', (error) => {
+            console.error(chalk.red(`❌ Failed to start MCP server: ${error.message}`));
+            process.exit(1);
+        });
+    });
+
+// workflow - Lifecycle management (activate / deactivate / credential-required)
+const workflowCmd = program
+    .command('workflow')
+    .description('Workflow lifecycle management (activate, deactivate, inspect credentials)');
+
+workflowCmd
+    .command('activate')
+    .argument('<workflowId>', 'Workflow ID to activate')
+    .description('Activate (publish) a workflow so it can be triggered')
+    .action(async (workflowId) => {
+        await new WorkflowCommand().activate(workflowId);
+    });
+
+workflowCmd
+    .command('deactivate')
+    .argument('<workflowId>', 'Workflow ID to deactivate')
+    .description('Deactivate a workflow (stops triggers from firing)')
+    .action(async (workflowId) => {
+        await new WorkflowCommand().deactivate(workflowId);
+    });
+
+workflowCmd
+    .command('credential-required')
+    .argument('<workflowId>', 'Workflow ID to inspect')
+    .description(
+        'List credentials required by a workflow and whether they already exist.\n' +
+        'Exits 0 if all present, exits 1 if any are missing (agent-friendly).'
+    )
+    .option('--json', 'Output as JSON array for agent/script consumption')
+    .action(async (workflowId, options) => {
+        await new WorkflowCommand().credentialRequired(workflowId, { json: options.json });
+    });
+
+// execution - Inspect workflow executions
+const executionCmd = program
+    .command('execution')
+    .description('Inspect workflow executions for debugging and post-run diagnosis');
+
+executionCmd
+    .command('list')
+    .description('List executions, optionally filtered by workflow or status')
+    .option('--workflow-id <id>', 'Workflow ID to filter executions by')
+    .option('--status <status>', 'Status filter: canceled|crashed|error|new|running|success|unknown|waiting')
+    .option('--project-id <id>', 'Project ID to filter executions by')
+    .option('--limit <number>', 'Limit the number of returned executions', (value) => parsePositiveIntegerOption(value, '--limit'))
+    .option('--cursor <cursor>', 'Pagination cursor from a previous execution list call')
+    .option('--include-data', 'Include execution data in list results (large output, usually use execution get instead)')
+    .option('--json', 'Output JSON for agents and scripts')
+    .addHelpText('after', `
+Examples:
+  $ n8nac execution list --workflow-id <workflowId> --limit 5
+  $ n8nac execution list --workflow-id <workflowId> --status error --json
+`)
+    .action(async (options) => {
+        await new ExecutionCommand().list({
+            workflowId: options.workflowId,
+            status: options.status,
+            projectId: options.projectId,
+            limit: options.limit,
+            cursor: options.cursor,
+            includeData: options.includeData,
+            json: options.json,
+        });
+    });
+
+executionCmd
+    .command('get')
+    .argument('<id>', 'Execution ID')
+    .description('Get a single execution by ID')
+    .option('--include-data', 'Include execution run data and workflow details')
+    .option('--json', 'Output JSON (default behavior; accepted for script compatibility)')
+    .addHelpText('after', `
+Examples:
+  $ n8nac execution get <executionId>
+  $ n8nac execution get <executionId> --include-data --json
+`)
+    .action(async (id, options) => {
+        await new ExecutionCommand().get(id, {
+            includeData: options.includeData,
+            json: options.json,
+        });
+    });
+
+// credential - Manage n8n credentials
+const credentialCmd = program
+    .command('credential')
+    .description('Manage n8n credentials (schema introspection, create, list, delete)');
+
+credentialCmd
+    .command('schema')
+    .argument('<type>', 'Credential type name (e.g. notionApi, slackOAuth2Api, googleApi)')
+    .description('Show the JSON schema for a credential type — lists required fields and their types')
+    .option('--json', 'Output JSON (default behavior; accepted for script compatibility)')
+    .addHelpText('after', `
+Examples:
+  $ n8nac credential schema openAiApi
+  $ n8nac credential schema slackApi --json
+`)
+    .action(async (typeName, options) => {
+        await new CredentialCommand().schema(typeName, { json: options.json });
+    });
+
+credentialCmd
+    .command('list')
+    .description('List all credentials (metadata only, no secrets)')
+    .option('--json', 'Output the credential list as JSON for agents and scripts')
+    .addHelpText('after', `
+Examples:
+  $ n8nac credential list
+  $ n8nac credential list --json
+`)
+    .action(async (options) => {
+        await new CredentialCommand().list({ json: options.json });
+    });
+
+credentialCmd
+    .command('get')
+    .argument('<id>', 'Credential ID')
+    .description('Get credential metadata by ID (no secrets returned)')
+    .option('--json', 'Output JSON (default behavior; accepted for script compatibility)')
+    .action(async (id, options) => {
+        await new CredentialCommand().get(id, { json: options.json });
+    });
+
+credentialCmd
+    .command('create')
+    .description('Create a new credential')
+    .requiredOption('--type <type>', 'Credential type name (e.g. notionApi)')
+    .requiredOption('--name <name>', 'Display name for the credential')
+    .option('--data <json>', 'Credential data as inline JSON string (avoid for secrets — use --file instead)')
+    .option('--file <path>', 'Path to JSON file with credential data (preferred over --data)')
+    .option('--project-id <id>', 'Project to assign the credential to')
+    .option('--json', 'Output created credential metadata as JSON')
+    .addHelpText('after', `
+Examples:
+  $ n8nac credential schema openAiApi
+  $ n8nac credential create --type openAiApi --name "My OpenAI" --file cred.json
+  $ n8nac credential create --type openAiApi --name "My OpenAI" --file cred.json --json
+
+Notes:
+  - Prefer --file over --data to keep secrets out of shell history.
+  - Run 'n8nac credential schema <type>' before creating a new credential type.
+  - If creation fails, read the returned validation message and change the payload before retrying.
+`)
+    .action(async (options) => {
+        await new CredentialCommand().create({
+            type: options.type,
+            name: options.name,
+            data: options.data,
+            file: options.file,
+            projectId: options.projectId,
+            json: options.json,
+        });
+    });
+
+credentialCmd
+    .command('delete')
+    .argument('<id>', 'Credential ID')
+    .description('Permanently delete a credential')
+    .action(async (id) => {
+        await new CredentialCommand().delete(id);
     });
 
 // skills - AI knowledge tools subcommand group

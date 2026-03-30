@@ -60,6 +60,21 @@ describe('TestCommand.run()', () => {
         expect(code).toBe(1);
     });
 
+    it('returns exit code 1 for invalid --query JSON', async () => {
+        const code = await cmd.run('wf-1', { query: 'not-json' });
+        expect(code).toBe(1);
+    });
+
+    it('returns exit code 1 for non-object --data JSON', async () => {
+        const code = await cmd.run('wf-1', { data: '["x"]' });
+        expect(code).toBe(1);
+    });
+
+    it('returns exit code 1 for non-object --query JSON', async () => {
+        const code = await cmd.run('wf-1', { query: '"x"' });
+        expect(code).toBe(1);
+    });
+
     it('returns exit code 0 on success (2xx)', async () => {
         vi.spyOn(cmd['client'], 'testWorkflow').mockResolvedValue(
             makeResult({
@@ -89,6 +104,26 @@ describe('TestCommand.run()', () => {
         // Must mention configuration gap in output
         const output = consoleSpy.mock.calls.flat().join(' ');
         expect(output).toMatch(/configuration gap/i);
+    });
+
+    it('returns exit code 0 for runtime-state issues and avoids wiring guidance', async () => {
+        vi.spyOn(cmd['client'], 'testWorkflow').mockResolvedValue(
+            makeResult({
+                success: false,
+                errorClass: 'runtime-state',
+                errorMessage: 'The requested webhook "wf" is not registered.',
+                statusCode: 404,
+                notes: ['Click Execute workflow before retrying this test URL.'],
+            })
+        );
+
+        const code = await cmd.run('wf-1', {});
+        expect(code).toBe(0);
+
+        const output = consoleSpy.mock.calls.flat().join(' ');
+        expect(output).toMatch(/runtime state issue/i);
+        expect(output).toContain('Click Execute workflow before retrying this test URL.');
+        expect(output).not.toMatch(/fixable structural error/i);
     });
 
     it('returns exit code 1 for Class B (wiring-error)', async () => {
@@ -136,6 +171,20 @@ describe('TestCommand.run()', () => {
 
         await cmd.run('wf-1', { data: '{"key":"value"}', prod: true });
 
-        expect(spy).toHaveBeenCalledWith('wf-1', { data: { key: 'value' }, prod: true });
+        expect(spy).toHaveBeenCalledWith('wf-1', { data: { key: 'value' }, query: undefined, prod: true });
+    });
+
+    it('passes explicit --query JSON to testWorkflow', async () => {
+        const spy = vi.spyOn(cmd['client'], 'testWorkflow').mockResolvedValue(
+            makeResult({ success: true, errorClass: null })
+        );
+
+        await cmd.run('wf-1', { query: '{"chatInput":"hello"}' });
+
+        expect(spy).toHaveBeenCalledWith('wf-1', {
+            data: {},
+            query: { chatInput: 'hello' },
+            prod: false,
+        });
     });
 });

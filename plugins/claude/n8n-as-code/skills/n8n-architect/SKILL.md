@@ -19,7 +19,7 @@ Before using any `n8nac` workflow command, check whether the workspace is initia
 ### Initialization Check
 - Look for `n8nac-config.json` in the workspace root.
 - If `n8nac-config.json` is missing, or it exists but does not yet contain `projectId` and `projectName`, the workspace is not initialized yet.
-- **NEVER tell the user to run `npx n8nac init` themselves.** You are the agent — it is YOUR job to run the command.
+- **NEVER tell the user to run `npx --yes n8nac init` themselves.** You are the agent — it is YOUR job to run the command.
 - Initialization is a 2-step flow: first save credentials with `npx --yes n8nac init-auth --host <url> --api-key <key>`, then select the project with `npx --yes n8nac init-project`.
 - If the user has already provided the n8n host and API key, run `npx --yes n8nac init-auth --host <url> --api-key <key>` immediately.
 - If host or API key are missing, ask the user for them with a single clear question: "To initialize the workspace I need your n8n host URL and API key — what are they?" Then, once you have both values, run `npx --yes n8nac init-auth --host <url> --api-key <key>` yourself.
@@ -119,6 +119,20 @@ This returns the full JSON schema including all parameters, types, defaults, val
 ### Step 3: Apply the Knowledge
 
 Use the retrieved schema as the **absolute source of truth** when generating or modifying workflow TypeScript. Never add parameters that aren't in the schema.
+
+## 🧪 Debugging Past Executions
+
+When a workflow passed validation but failed or behaved unexpectedly at runtime, inspect recent executions before changing the workflow blindly.
+
+### Execution Debug Workflow
+1. List recent executions with `npx --yes n8nac executions list` and narrow by `--workflow-id`, `--project-id`, `--status`, or `--limit` when needed.
+2. Download the full payload for the most relevant execution with `npx --yes n8nac executions download <executionId>`.
+3. Read the saved JSON file from the configured `executionsFolder` (default: `.executions`) instead of pasting the full payload into chat.
+4. Use that execution JSON to inspect node inputs/outputs, expression results, `error` details, and the exact runtime data that reached each step.
+5. Only after inspecting the execution payload should you propose a workflow fix, then push and re-test.
+
+The execution download command returns an absolute file path. Treat that file as the source of truth for runtime debugging.
+
 
 ## 🗺️ Reading Workflow Files Efficiently
 
@@ -318,6 +332,63 @@ If you're unsure about any node:
    npx --yes n8nac skills node-info "nodeName"
    ```
 
+## 🔑 Credential Management
+
+When a workflow is blocked because a credential is missing, resolve it without opening the n8n UI:
+
+**Full autonomous loop:**
+
+1. **Detect missing credentials for a workflow (exit 1 = act, exit 0 = all present):**
+   ```bash
+   npx --yes n8nac workflow credential-required <workflowId> --json
+   ```
+   Output: `[{ nodeName, credentialType, credentialName, exists }]`  
+   Run this immediately after pushing. Exit code 1 means at least one credential is missing.
+
+2. **Discover required fields for a credential type:**
+   ```bash
+   npx --yes n8nac credential schema <type>
+   ```
+   Example: `npx --yes n8nac credential schema notionApi`  
+   Use the output to build the credential data file. Ask the user for secret values — never guess.
+
+3. **Create the credential from a file (preferred — keeps secrets out of shell history):**
+   ```bash
+   npx --yes n8nac credential create --type <type> --name "My Credential" --file cred.json --json
+   ```
+
+4. **Activate the workflow after credentials are provisioned:**
+   ```bash
+   npx --yes n8nac workflow activate <workflowId>
+   ```
+
+5. **Run the test:**
+   ```bash
+   npx --yes n8nac test <workflowId>
+   ```
+   A Class A error that was blocking the test should now be resolved.
+   If the workflow uses a classic Webhook or Form trigger and the test URL says the webhook is not registered, this is usually a manual arm/listen issue in the n8n editor rather than a code bug.
+   Click `Execute workflow` or `Listen for test event` in the editor, then retry the same test request once.
+   If the trigger uses GET or HEAD and the workflow reads from `$json.query`, prefer:
+   ```bash
+   npx --yes n8nac test <workflowId> --query '{"chatInput":"hello"}'
+   ```
+
+6. **If the webhook call succeeds but the workflow still misbehaves, inspect executions:**
+   ```bash
+   npx --yes n8nac execution list --workflow-id <workflowId> --limit 5 --json
+   npx --yes n8nac execution get <executionId> --include-data --json
+   ```
+   Use this to debug server-side execution failures without opening the n8n UI.
+
+**Other credential commands:**
+   ```bash
+   npx --yes n8nac credential list --json               # List all existing credentials as JSON
+   npx --yes n8nac workflow deactivate <workflowId>     # Deactivate a workflow
+   ```
+
+If `credential create` fails, read the returned validation message and change the payload before retrying. Never rerun the same failing command unchanged. If a subcommand is unfamiliar, run `npx --yes n8nac <subcommand> --help` instead of inventing flags.
+
 ## 📝 Response Format
 
 When helping users:
@@ -335,6 +406,7 @@ When helping users:
 11. For webhook/chat/form workflows: run `npx --yes n8nac test-plan <id>` after pushing to inspect trigger, endpoints, and suggested payload.
     - Then run `npx --yes n8nac test <id>` with the inferred payload when runtime validation is needed.
     - If **Class A** (config gap): report what the user needs to configure — do NOT re-edit the code.
+    - If **runtime-state issue** (webhook test URL not armed, production webhook not registered): do NOT re-edit the code. Resolve the state/arming issue first.
     - If **Class B** (wiring error): fix the issue, push again, and re-test.
 
 ---
